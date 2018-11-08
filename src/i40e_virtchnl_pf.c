@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
- * Copyright(c) 2013 - 2017 Intel Corporation.
+ * Copyright(c) 2013 - 2018 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -1587,39 +1587,39 @@ static int i40e_vc_get_vf_resources_msg(struct i40e_vf *vf, u8 *msg)
 				  VIRTCHNL_VF_OFFLOAD_RSS_REG |
 				  VIRTCHNL_VF_OFFLOAD_VLAN;
 
-	vfres->vf_offload_flags = VIRTCHNL_VF_OFFLOAD_L2;
+	vfres->vf_cap_flags = VIRTCHNL_VF_OFFLOAD_L2;
 	vsi = pf->vsi[vf->lan_vsi_idx];
 	if (!vsi->info.pvid)
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_VLAN;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_VLAN;
 	if (i40e_vf_client_capable(pf, vf->vf_id) &&
 	    (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_IWARP)) {
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_IWARP;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_IWARP;
 		set_bit(I40E_VF_STATE_IWARPENA, &vf->vf_states);
 	} else {
 		clear_bit(I40E_VF_STATE_IWARPENA, &vf->vf_states);
 	}
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_PF) {
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_RSS_PF;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_PF;
 	} else {
 		if ((pf->hw_features & I40E_HW_RSS_AQ_CAPABLE) &&
 		    (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_AQ))
-			vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_RSS_AQ;
+			vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_AQ;
 		else
-			vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_RSS_REG;
+			vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RSS_REG;
 	}
 	if (pf->hw_features & I40E_HW_MULTIPLE_TCP_UDP_RSS_PCTYPE) {
 		if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2)
-			vfres->vf_offload_flags |=
+			vfres->vf_cap_flags |=
 				VIRTCHNL_VF_OFFLOAD_RSS_PCTYPE_V2;
 	}
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ENCAP)
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP;
 
 	if ((pf->hw_features & I40E_HW_OUTER_UDP_CSUM_CAPABLE) &&
 	    (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM))
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM;
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_RX_POLLING) {
 		if (pf->flags & I40E_FLAG_MFP_ENABLED) {
@@ -1629,17 +1629,17 @@ static int i40e_vc_get_vf_resources_msg(struct i40e_vf *vf, u8 *msg)
 			aq_ret = I40E_ERR_PARAM;
 			goto err;
 		}
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_RX_POLLING;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_RX_POLLING;
 	}
 
 	if (pf->hw_features & I40E_HW_WB_ON_ITR_CAPABLE) {
 		if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_WB_ON_ITR)
-			vfres->vf_offload_flags |=
+			vfres->vf_cap_flags |=
 					VIRTCHNL_VF_OFFLOAD_WB_ON_ITR;
 	}
 
 	if (vf->driver_caps & VIRTCHNL_VF_OFFLOAD_REQ_QUEUES)
-		vfres->vf_offload_flags |= VIRTCHNL_VF_OFFLOAD_REQ_QUEUES;
+		vfres->vf_cap_flags |= VIRTCHNL_VF_OFFLOAD_REQ_QUEUES;
 
 	vfres->num_vsis = num_vsis;
 	vfres->num_queue_pairs = vf->num_queue_pairs;
@@ -1663,7 +1663,7 @@ static int i40e_vc_get_vf_resources_msg(struct i40e_vf *vf, u8 *msg)
 	 * negotiated
 	 */
 	if (pf->vf_base_mode_only)
-		vfres->vf_offload_flags &= VF_BASE_MODE_OFFLOADS;
+		vfres->vf_cap_flags &= VF_BASE_MODE_OFFLOADS;
 err:
 	/* send the response back to the VF */
 	ret = i40e_vc_send_msg_to_vf(vf, VIRTCHNL_OP_GET_VF_RESOURCES,
@@ -1979,6 +1979,50 @@ error_param:
 }
 
 /**
+ * i40e_ctrl_vf_tx_rings
+ * @vsi: the SRIOV VSI being configured
+ * @q_map: bit map of the queues to be enabled
+ * @enable: start or stop the queue
+ **/
+static int i40e_ctrl_vf_tx_rings(struct i40e_vsi *vsi, unsigned long q_map,
+				 bool enable)
+{
+	struct i40e_pf *pf = vsi->back;
+	int ret = 0;
+	u16 q_id;
+
+	for_each_set_bit(q_id, &q_map, I40E_MAX_VF_QUEUES) {
+		ret = i40e_control_wait_tx_q(pf, vsi->base_queue + q_id,
+					     enable);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+
+/**
+ * i40e_ctrl_vf_rx_rings
+ * @vsi: the SRIOV VSI being configured
+ * @q_map: bit map of the queues to be enabled
+ * @enable: start or stop the queue
+ **/
+static int i40e_ctrl_vf_rx_rings(struct i40e_vsi *vsi, unsigned long q_map,
+				 bool enable)
+{
+	struct i40e_pf *pf = vsi->back;
+	int ret = 0;
+	u16 q_id;
+
+	for_each_set_bit(q_id, &q_map, I40E_MAX_VF_QUEUES) {
+		ret = i40e_control_wait_rx_q(pf, vsi->base_queue + q_id,
+					     enable);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+
+/**
  * i40e_vc_enable_queues_msg
  * @vf: pointer to the VF info
  * @msg: pointer to the msg buffer
@@ -2009,8 +2053,17 @@ static int i40e_vc_enable_queues_msg(struct i40e_vf *vf, u8 *msg, u16 msglen)
 		goto error_param;
 	}
 
-	if (i40e_vsi_start_rings(pf->vsi[vf->lan_vsi_idx]))
+	/* Use the queue bit map sent by the VF */
+	if (i40e_ctrl_vf_rx_rings(pf->vsi[vf->lan_vsi_idx], vqs->rx_queues,
+				  true)) {
 		aq_ret = I40E_ERR_TIMEOUT;
+		goto error_param;
+	}
+	if (i40e_ctrl_vf_tx_rings(pf->vsi[vf->lan_vsi_idx], vqs->tx_queues,
+				  true)) {
+		aq_ret = I40E_ERR_TIMEOUT;
+		goto error_param;
+	}
 error_param:
 	/* send the response to the VF */
 	return i40e_vc_send_resp_to_vf(vf, VIRTCHNL_OP_ENABLE_QUEUES,
@@ -2048,8 +2101,17 @@ static int i40e_vc_disable_queues_msg(struct i40e_vf *vf, u8 *msg, u16 msglen)
 		goto error_param;
 	}
 
-	i40e_vsi_stop_rings(pf->vsi[vf->lan_vsi_idx]);
-
+	/* Use the queue bit map sent by the VF */
+	if (i40e_ctrl_vf_tx_rings(pf->vsi[vf->lan_vsi_idx], vqs->tx_queues,
+				  false)) {
+		aq_ret = I40E_ERR_TIMEOUT;
+		goto error_param;
+	}
+	if (i40e_ctrl_vf_rx_rings(pf->vsi[vf->lan_vsi_idx], vqs->rx_queues,
+				  false)) {
+		aq_ret = I40E_ERR_TIMEOUT;
+		goto error_param;
+	}
 error_param:
 	/* send the response to the VF */
 	return i40e_vc_send_resp_to_vf(vf, VIRTCHNL_OP_DISABLE_QUEUES,
@@ -2104,7 +2166,7 @@ static int i40e_vc_request_queues_msg(struct i40e_vf *vf, u8 *msg, int msglen)
 	}
 
 	return i40e_vc_send_msg_to_vf(vf, VIRTCHNL_OP_REQUEST_QUEUES, 0,
-				      (u8 *)vfres, sizeof(vfres));
+				      (u8 *)vfres, sizeof(*vfres));
 }
 
 /**
@@ -2239,18 +2301,18 @@ static int i40e_vc_add_mac_addr_msg(struct i40e_vf *vf, u8 *msg, u16 msglen)
 		struct i40e_mac_filter *f;
 
 		f = i40e_find_mac(vsi, al->list[i].addr);
-		if (!f)
-			f = i40e_add_mac_filter(vsi, al->list[i].addr);
-
 		if (!f) {
-			dev_err(&pf->pdev->dev,
-				"Unable to add MAC filter %pM for VF %d\n",
-				 al->list[i].addr, vf->vf_id);
-			ret = I40E_ERR_PARAM;
-			spin_unlock_bh(&vsi->mac_filter_hash_lock);
-			goto error_param;
-		} else {
-			vf->num_mac++;
+			f = i40e_add_mac_filter(vsi, al->list[i].addr);
+			if (!f) {
+				dev_err(&pf->pdev->dev,
+					"Unable to add MAC filter %pM for VF %d\n",
+					al->list[i].addr, vf->vf_id);
+				ret = I40E_ERR_PARAM;
+				spin_unlock_bh(&vsi->mac_filter_hash_lock);
+				goto error_param;
+			} else {
+				vf->num_mac++;
+			}
 		}
 	}
 	spin_unlock_bh(&vsi->mac_filter_hash_lock);
@@ -2914,6 +2976,7 @@ int i40e_ndo_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac)
 	int ret = 0;
 	struct hlist_node *h;
 	int bkt;
+	u8 i;
 
 	/* validate the request */
 	if (vf_id >= pf->num_alloc_vfs) {
@@ -2925,6 +2988,16 @@ int i40e_ndo_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac)
 
 	vf = &(pf->vf[vf_id]);
 	vsi = pf->vsi[vf->lan_vsi_idx];
+
+	/* When the VF is resetting wait until it is done.
+	 * It can take up to 200 milliseconds,
+	 * but wait for up to 300 milliseconds to be safe.
+	 */
+	for (i = 0; i < 15; i++) {
+		if (test_bit(I40E_VF_STATE_INIT, &vf->vf_states))
+			break;
+		msleep(20);
+	}
 	if (!test_bit(I40E_VF_STATE_INIT, &vf->vf_states)) {
 		dev_err(&pf->pdev->dev, "VF %d still in reset. Try again.\n",
 			vf_id);

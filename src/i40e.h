@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
- * Copyright(c) 2013 - 2017 Intel Corporation.
+ * Copyright(c) 2013 - 2018 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -799,6 +799,7 @@ struct i40e_vsi {
 } ____cacheline_internodealigned_in_smp;
 
 struct i40e_netdev_priv {
+	struct idc_srv_provider prov_callbacks;
 	struct i40e_vsi *vsi;
 };
 
@@ -814,6 +815,7 @@ struct i40e_q_vector {
 	struct i40e_ring_container rx;
 	struct i40e_ring_container tx;
 
+	u8 itr_countdown;	/* when 0 should adjust adaptive ITR */
 	u8 num_ringpairs;	/* total number of ring pairs in vector */
 
 #ifdef HAVE_IRQ_AFFINITY_NOTIFY
@@ -824,8 +826,6 @@ struct i40e_q_vector {
 	struct rcu_head rcu;	/* to avoid race with update stats on free */
 	char name[I40E_INT_NAME_STR_LEN];
 	bool arm_wb_state;
-#define ITR_COUNTDOWN_START 100
-	u8 itr_countdown;	/* when 0 should adjust ITR */
 } ____cacheline_internodealigned_in_smp;
 
 /* lan device */
@@ -1012,6 +1012,8 @@ void i40e_service_event_schedule(struct i40e_pf *pf);
 void i40e_notify_client_of_vf_msg(struct i40e_vsi *vsi, u32 vf_id,
 				  u8 *msg, u16 len);
 
+int i40e_control_wait_tx_q(struct i40e_pf *pf, int pf_q, bool enable);
+int i40e_control_wait_rx_q(struct i40e_pf *pf, int pf_q, bool enable);
 int i40e_vsi_start_rings(struct i40e_vsi *vsi);
 void i40e_vsi_stop_rings(struct i40e_vsi *vsi);
 void i40e_vsi_stop_rings_no_wait(struct  i40e_vsi *vsi);
@@ -1028,6 +1030,7 @@ void i40e_veb_release(struct i40e_veb *veb);
 int i40e_veb_config_tc(struct i40e_veb *veb, u8 enabled_tc);
 int i40e_vsi_add_pvid(struct i40e_vsi *vsi, u16 vid);
 void i40e_vsi_remove_pvid(struct i40e_vsi *vsi);
+int i40e_get_cloud_filter_type(u8 flags, u16 *type);
 int i40e_add_del_cloud_filter(struct i40e_pf *pf,
 			      struct i40e_cloud_filter *filter,
 			      bool add);

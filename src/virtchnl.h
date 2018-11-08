@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
- * Copyright(c) 2013 - 2017 Intel Corporation.
+ * Copyright(c) 2013 - 2018 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -224,7 +224,7 @@ struct virtchnl_vsi_resource {
 
 VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 
-/* VF offload flags
+/* VF capability flags
  * VIRTCHNL_VF_OFFLOAD_L2 flag is inclusive of base mode L2 offloads including
  * TX/RX Checksum offloading and TSO for non-tunnelled packets.
  */
@@ -242,6 +242,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 #define VIRTCHNL_VF_OFFLOAD_ENCAP		0X00100000
 #define VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM		0X00200000
 #define VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM	0X00400000
+/* Define below the capability flags that are not offloads */
+#define VIRTCHNL_VF_CAP_ADV_LINK_SPEED		0x00000080
 
 #define VF_BASE_MODE_OFFLOADS (VIRTCHNL_VF_OFFLOAD_L2 | \
 			       VIRTCHNL_VF_OFFLOAD_VLAN | \
@@ -253,7 +255,7 @@ struct virtchnl_vf_resource {
 	u16 max_vectors;
 	u16 max_mtu;
 
-	u32 vf_offload_flags;
+	u32 vf_cap_flags;
 	u32 rss_key_size;
 	u32 rss_lut_size;
 
@@ -333,8 +335,8 @@ VIRTCHNL_CHECK_STRUCT_LEN(72, virtchnl_vsi_queue_config_info);
  * additional queues must be negotiated.  This is a best effort request as it
  * is possible the PF does not have enough queues left to support the request.
  * If the PF cannot support the number requested it will respond with the
- * maximum number it is able to support; otherwise it will respond with the
- * number requested.
+ * maximum number it is able to support.  If the request is successful, PF will
+ * then reset the VF to institute required changes.
  */
 
 /* VF resource request */
@@ -453,8 +455,23 @@ VIRTCHNL_CHECK_STRUCT_LEN(4, virtchnl_promisc_info);
  * the virtchnl_queue_select struct to specify the VSI. The queue_id
  * field is ignored by the PF.
  *
- * PF replies with struct eth_stats in an external buffer.
+ * PF replies with struct virtchnl_eth_stats in an external buffer.
  */
+
+struct virtchnl_eth_stats {
+	u64 rx_bytes;			/* received bytes */
+	u64 rx_unicast;			/* received unicast pkts */
+	u64 rx_multicast;		/* received multicast pkts */
+	u64 rx_broadcast;		/* received broadcast pkts */
+	u64 rx_discards;
+	u64 rx_unknown_protocol;
+	u64 tx_bytes;			/* transmitted bytes*/
+	u64 tx_unicast;			/* transmitted unicast pkts */
+	u64 tx_multicast;		/* transmitted multicast pkts */
+	u64 tx_broadcast;		/* transmitted broadcast pkts */
+	u64 tx_discards;
+	u64 tx_errors;
+};
 
 /* VIRTCHNL_OP_CONFIG_RSS_KEY
  * VIRTCHNL_OP_CONFIG_RSS_LUT
@@ -476,7 +493,7 @@ VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_key);
 struct virtchnl_rss_lut {
 	u16 vsi_id;
 	u16 lut_entries;
-	u8 lut[1];        /* RSS lookup table*/
+	u8 lut[1];        /* RSS lookup table */
 };
 
 VIRTCHNL_CHECK_STRUCT_LEN(6, virtchnl_rss_lut);
@@ -512,10 +529,23 @@ enum virtchnl_event_codes {
 struct virtchnl_pf_event {
 	enum virtchnl_event_codes event;
 	union {
+		/* If the PF driver does not support the new speed reporting
+		 * capabilities then use link_event else use link_event_adv to
+		 * get the speed and link information. The ability to understand
+		 * new speeds is indicated by setting the capability flag
+		 * VIRTCHNL_VF_CAP_ADV_LINK_SPEED in vf_cap_flags parameter
+		 * in virtchnl_vf_resource struct and can be used to determine
+		 * which link event struct to use below.
+		 */
 		struct {
 			enum virtchnl_link_speed link_speed;
 			bool link_status;
 		} link_event;
+		struct {
+			/* link_speed provided in Mbps */
+			u32 link_speed;
+			bool link_status;
+		} link_event_adv;
 	} event_data;
 
 	int severity;
@@ -723,7 +753,7 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		return VIRTCHNL_ERR_PARAM;
 	}
 	/* few more checks */
-	if ((valid_len != msglen) || (err_msg_format))
+	if (err_msg_format || valid_len != msglen)
 		return VIRTCHNL_STATUS_ERR_OPCODE_MISMATCH;
 
 	return 0;
