@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
- * Copyright(c) 2013 - 2018 Intel Corporation.
+ * Copyright(c) 2013 - 2017 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -1161,7 +1161,6 @@ void i40e_nvmupd_clear_wait_state(struct i40e_hw *hw)
  * i40e_nvmupd_check_wait_event - handle NVM update operation events
  * @hw: pointer to the hardware structure
  * @opcode: the event that just happened
- * @desc: AdminQ descriptor
  **/
 void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode,
 				  struct i40e_aq_desc *desc)

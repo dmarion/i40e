@@ -1,7 +1,7 @@
 /*******************************************************************************
  *
  * Intel(R) 40-10 Gigabit Ethernet Connection Network Driver
- * Copyright(c) 2013 - 2018 Intel Corporation.
+ * Copyright(c) 2013 - 2017 Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
@@ -202,6 +202,7 @@ exit:
  * @hw: pointer to our HW structure
  * @hmc_info: pointer to the HMC configuration information structure
  * @idx: the page index
+ * @is_pf: distinguishes a VF from a PF
  *
  * This function:
  *	1. Marks the entry in pd tabe (for paged address mode) or in sd table
