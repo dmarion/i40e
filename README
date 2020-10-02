@@ -2,7 +2,7 @@
 i40e Linux* Base Driver for the Intel(R) Ethernet Controller 700 Series
 ===============================================================================
 
-June 18, 2020
+September 2, 2020
 Copyright(c) 2014 - 2020 Intel Corporation.
 
 Contents
@@ -26,6 +26,7 @@ Function (VF) driver for this driver is iavf.
 Driver information can be obtained using ethtool, lspci, and ifconfig.
 Instructions on updating ethtool can be found in the section Additional
 Configurations later in this document.
+
 This driver is only supported as a loadable module at this time. Intel is not
 supplying patches against the kernel source to allow for static linking of the
 drivers.
@@ -229,6 +230,20 @@ To manually build the driver
    that is being tested:
 
    # ping <IP_address>
+
+Note: For certain distributions like (but not limited to) Red Hat Enterprise
+Linux 7, Ubuntu, and SUSE Linux Enterprise Server (SLES) 11, once the driver is
+installed, you may need to update the initrd/initramfs file to prevent the OS
+loading old versions of the i40e driver.
+   For Red Hat distributions:
+	# dracut --force
+
+   For Ubuntu:
+	# update-initramfs -u
+
+   For SLES:
+	# mkinitrd
+
 
 
 Command Line Parameters
@@ -517,6 +532,10 @@ NOTE: This driver supports the following flow types:
 - TCPv4
 - UDPv4
 - SCTPv4
+- IPv6
+- TCPv6
+- UDPv6
+- SCTPv6
 Each flow type supports valid combinations of IP addresses (source or
 destination) and UDP/TCP ports (source and destination). You can supply only a
 source IP address, a source IP address and a destination port, or any
@@ -527,6 +546,33 @@ two-byte pattern and offset by using the ethtool user-def and mask fields. Only
 L3 and L4 flow types are supported for user-defined flexible filters. For a
 given flow type, you must clear all Intel Ethernet Flow Director filters before
 changing the input set (for that flow type).
+
+The following table summarizes supported Intel Ethernet Flow Director features
+across Intel(R) Ethernet controllers.
+
+---------------------------------------------------------------------------
+Feature             500 Series      700 Series         800 Series
+===========================================================================
+VF FLOW DIRECTOR    Supported       Routing to VF      Not supported
+                                    not supported
+---------------------------------------------------------------------------
+IP ADDRESS RANGE    Supported       Not supported      Field masking
+FILTER
+---------------------------------------------------------------------------
+IPv6 SUPPORT        Supported       Supported          Supported
+---------------------------------------------------------------------------
+CONFIGURABLE        Configured      Configured         Configured
+INPUT SET           per port        globally           per port
+---------------------------------------------------------------------------
+ATR                 Supported       Supported          Not supported
+---------------------------------------------------------------------------
+FLEX BYTE FILTER    Starts at       Starts at          Starts at
+                    beginning       beginning of       beginning
+                    of packet       payload            of packet
+---------------------------------------------------------------------------
+TUNNELED PACKETS    Filter matches  Filter matches     Filter matches
+                    outer header    inner header       inner header
+---------------------------------------------------------------------------
 
 
 Application Targeted Routing (ATR) Perfect Filters
@@ -575,13 +621,15 @@ To add a new filter:
 action <queue>
   Where:
     <ethX> - the Ethernet device to program
-    <type> - can be ip4, tcp4, udp4, sctp4
+    <type> - can be ip4, tcp4, udp4, sctp4, ip6, tcp6, udp6, sctp6
     <ip> - the IP address to match on
     <ip_mask> - the IPv4 address to mask on
-            NOTE: These filters use inverted masks.
+              NOTE: These filters use inverted masks. Address masks can be
+              either all 0 (to ignore a match) or all F (for a full match).
     <port> - the port number to match on
     <port_mask> - the 16-bit integer for masking
-            NOTE: These filters use inverted masks.
+              NOTE: These filters use inverted masks. Port masks can be
+              either all 0 (to ignore a match) or all F (for a full match).
     <queue> - the queue to direct traffic toward (-1 discards the
               matched traffic)
 
@@ -879,8 +927,14 @@ and allow Tx traffic to be rate limited per application.
 
 Requirements:
 - Kernel version 4.15 or later
-- The sch_mqprio, act_mirred and cls_flower modules must be loaded
+- The sch_mqprio, act_mirred and cls_flower modules must be loaded. For example:
+# modprobe sch_mqprio
+# modprobe act_mirred
+# modprove cls_flower
 - The latest version of iproute2
+# cd iproute2
+# ./configure
+# make DESTDIR=/opt/iproute2 install
 - NVM version 6.01 or later
 - ADQ cannot be enabled when the following features are enabled: Data Center
 Bridging (DCB), Multiple Functions per Port (MFP), or Sideband Filters.
@@ -941,7 +995,7 @@ as it does not match PF address data.
 traffic will be duplicated and sent to all matching TC queues. The hardware
 switch mirrors the packet to a VSI list when multiple filters are matched.
 
-EXAMPLE:
+EXAMPLES:
 See the tc and tc-flower man pages for more information on traffic control and
 TC flower filters.
 
@@ -954,6 +1008,18 @@ TC flower filters.
       map 0 0 0 0 1 1 1 1: Sets priorities 0-3 to use tc0 and 4-7 to use tc1
       queues 16@0 16@16: Assigns 16 queues to tc0 at offset 0 and 16 queues
           to tc1 at offset 16
+
+Multiple filters can be added to the device, using the same recipe (and
+requires no additional recipe resources), either on the same interface or on
+different interfaces. Each filter uses the same fields for matching, but can
+have different match values.
+  tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
+   tcp dst_port $app_port skip_sw hw_tc 1
+
+For example:
+
+  # tc filter add dev <ethX> protocol ip ingress prio 1 flower ip_proto
+     tcp dst_port 5555 skip_sw hw_tc 1
 
 
 RDMA (Remote Direct Memory Access)
@@ -1162,34 +1228,36 @@ priority flow control (802.1Qbb) which can limit or eliminate the number of
 dropped packets during network stress. Bandwidth can be allocated to each of
 these priorities, which is enforced at the hardware level (802.1Qaz).
 
-Adapter firmware implements LLDP and DCBX protocol agents as per 802.1AB and
-802.1Qaz respectively. There are potentially two DCBX modes on Linux, depending
-on the underlying PF device:
-- Intel Ethernet Controller 700 Series adapters only support firmware DCBX
-mode. They do not support software DCBX.
+DCB is normally configured on the network using the DCBX protocol (802.1Qaz), a
+specialization of LLDP (802.1AB). The i40e driver supports the following
+mutually exclusive variants of DCBX support:
+1) Firmware-based LLDP Agent
+2) Software-based LLDP Agent
 
-DCB parameters can be established via a firmware LLDP/DCBX agent. Only one
-LLDP/DCBX agent can be active on a single interface at a time. When the
-firmware DCBX agent is active, software agents will not be able to receive or
-transmit LLDP frames.
+In firmware-based mode, firmware intercepts all LLDP traffic and handles DCBX
+negotiation transparently for the user. In this mode, the adapter operates in
+"willing" DCBX mode, receiving DCB settings from the link partner (typically a
+switch). The local user can only query the negotiated DCB configuration. For
+information on configuring DCBX parameters on a switch, please consult the
+switch manufacturer's documentation.
 
-See the "FW-LLDP (Firmware Link Layer Discovery Protocol)" section in this
-README for the ethtool commands to query the status of the firmware LLDP/DCBX
-agent.
+In software-based mode, LLDP traffic is forwarded to the network stack and user
+space, where a software agent can handle it. In this mode, the adapter can
+operate in either "willing" or "nonwilling" DCBX mode and DCB configuration can
+be both queried and set locally. This mode requires the FW-based LLDP Agent to
+be disabled.
 
-When operating in firmware DCBX mode, the adapter is in an "always willing"
-state. DCB settings are applied on the adapter by transmitting a nonwilling
-configuration from the link partner. Typically this is a switch. For
-configuring DCBX parameters on a switch, please consult the switch
-manufacturer's documentation.
-
-NOTES:
-- You can disable the firmware agent using ethtool private flags. For DCB to be
-operational, the firmware LLDP agent is required.
-- Software configuration of DCBX parameters via dcbtool/lldptool is not
-supported.
-- The driver implements the DCB netlink interface layer to allow user-space to
-communicate with the driver and query DCB configuration for the port.
+NOTE:
+- You can enable and disable the firmware-based LLDP Agent using an ethtool
+private flag. Refer to the "FW-LLDP (Firmware Link Layer Discovery Protocol)"
+section in this README for more information.
+- In software-based DCBX mode, you can configure DCB parameters using software
+LLDP/DCBX agents that interface with the Linux kernel's DCB Netlink API. We
+recommend using OpenLLDP as the DCBX agent when running in software mode. For
+more information, see the OpenLLDP man pages and
+https://github.com/intel/openlldp.
+- The driver implements the DCB netlink interface layer to allow the user space
+to communicate with the driver and query DCB configuration for the port.
 
 
 FW-LLDP (Firmware Link Layer Discovery Protocol)
@@ -2006,6 +2074,14 @@ Windows guest OSs on a Linux host may not pass traffic across VLANs
 The VF is not aware of the VLAN configuration if you use Load Balancing and
 Failover (LBFO) to configure VLANs in a Windows guest. VLANs configured using
 LBFO on a VF driver may result in failure to pass traffic.
+
+
+Unexpected i40iw error messages in dmesg
+----------------------------------------
+If you install newer i40e drivers over the drivers in your Linux distro, you
+may see i40iw error messages in dmesg. This is because the i40iw drivers must
+be updated at the same time as the i40e drivers. These messages may be ignored
+if you do not use iWARP in your configuration.
 
 
 Support

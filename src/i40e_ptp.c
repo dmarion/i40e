@@ -246,7 +246,8 @@ static void i40_ptp_reset_timing_events(struct i40e_pf *pf)
 	spin_unlock_bh(&pf->ptp_rx_lock);
 }
 
-/** i40e_ptp_verify - check pins
+/**
+ * i40e_ptp_verify - check pins
  * @ptp: ptp clock
  * @pin: pin index
  * @func: assigned function
@@ -258,7 +259,14 @@ static void i40_ptp_reset_timing_events(struct i40e_pf *pf)
 static int i40e_ptp_verify(struct ptp_clock_info *ptp, unsigned int pin,
 			   enum ptp_pin_function func, unsigned int chan)
 {
-	/* TODO: implement pin checking */
+	switch (func) {
+	case PTP_PF_NONE:
+	case PTP_PF_EXTTS:
+	case PTP_PF_PEROUT:
+		break;
+	case PTP_PF_PHYSYNC:
+		return -EOPNOTSUPP;
+	}
 	return 0;
 }
 
@@ -520,7 +528,8 @@ static int i40e_ptp_settime32(struct ptp_clock_info *ptp,
 }
 #endif
 
-/** i40e_pps_configure - configure PPS events
+/**
+ * i40e_pps_configure - configure PPS events
  * @ptp: ptp clock
  * @rq: clock request
  * @on: status
@@ -532,7 +541,11 @@ static int i40e_pps_configure(struct ptp_clock_info *ptp,
 			      struct ptp_clock_request *rq,
 			      int on)
 {
-	/* TODO: implement PPS events */
+	struct i40e_pf *pf = container_of(ptp, struct i40e_pf, ptp_caps);
+
+	if (!!on)
+		i40e_ptp_set_1pps_signal_hw(pf);
+
 	return 0;
 }
 
@@ -1027,7 +1040,7 @@ static void i40e_ptp_set_pin_hw(struct i40e_hw *hw,
  **/
 static void i40e_ptp_set_led_hw(struct i40e_hw *hw,
 				unsigned int led,
-				enum i40e_ptp_gpio_pin_state state)
+				enum i40e_ptp_led_pin_state state)
 {
 	switch (state) {
 	case low:
@@ -1064,10 +1077,10 @@ static void i40e_ptp_set_pins_hw(struct i40e_pf *pf)
 	i40e_ptp_set_pin_hw(hw, I40E_SDP3_3, pins->sdp3_3);
 	i40e_ptp_set_pin_hw(hw, I40E_GPIO_4, pins->gpio_4);
 
-	i40e_ptp_set_led_hw(hw, I40E_LED2_0, pf->ptp_pins->led2_0);
-	i40e_ptp_set_led_hw(hw, I40E_LED2_1, pf->ptp_pins->led2_1);
-	i40e_ptp_set_led_hw(hw, I40E_LED3_0, pf->ptp_pins->led3_0);
-	i40e_ptp_set_led_hw(hw, I40E_LED3_1, pf->ptp_pins->led3_1);
+	i40e_ptp_set_led_hw(hw, I40E_LED2_0, pins->led2_0);
+	i40e_ptp_set_led_hw(hw, I40E_LED2_1, pins->led2_1);
+	i40e_ptp_set_led_hw(hw, I40E_LED3_0, pins->led3_0);
+	i40e_ptp_set_led_hw(hw, I40E_LED3_1, pins->led3_1);
 
 	dev_info(&pf->pdev->dev,
 		 "PTP configuration set to: SDP3_2: %s,  SDP3_3: %s,  GPIO_4: %s.\n",
@@ -1767,10 +1780,9 @@ void i40e_ptp_stop(struct i40e_pf *pf)
 			 pf->vsi[pf->lan_vsi]->netdev->name);
 	}
 
-	/* Set GPIO4 as an input */
-	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_SDP3_2), 0x0);
-	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_SDP3_3), 0x0);
-	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_GPIO_4), 0x0);
+	i40e_ptp_set_pin_hw(hw, I40E_SDP3_2, off);
+	i40e_ptp_set_pin_hw(hw, I40E_SDP3_3, off);
+	i40e_ptp_set_pin_hw(hw, I40E_GPIO_4, off);
 
 	regval = rd32(hw, I40E_PRTTSYN_AUX_0(0));
 	regval &= ~I40E_PRTTSYN_AUX_0_PTPFLAG_MASK;

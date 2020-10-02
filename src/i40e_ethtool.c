@@ -3700,8 +3700,8 @@ static int i40e_parse_rx_flow_user_data(struct i40e_pf *pf,
 	if (!(fsp->flow_type & FLOW_EXT))
 		return 0;
 
-	value = be64_to_cpu(*((__be64 *)fsp->h_ext.data));
-	mask = be64_to_cpu(*((__be64 *)fsp->m_ext.data));
+	value = be64_to_cpu(*((__force __be64 *)fsp->h_ext.data));
+	mask = be64_to_cpu(*((__force __be64 *)fsp->m_ext.data));
 
 #define I40E_USERDEF_CLOUD_FILTER	BIT_ULL(63)
 #define I40E_USERDEF_CLOUD_OUTERIP	BIT_ULL(62)
@@ -3829,8 +3829,8 @@ static void i40e_fill_rx_flow_user_data(struct ethtool_rx_flow_spec *fsp,
 	if (value || mask)
 		fsp->flow_type |= FLOW_EXT;
 
-	*((__be64 *)fsp->h_ext.data) = cpu_to_be64(value);
-	*((__be64 *)fsp->m_ext.data) = cpu_to_be64(mask);
+	*((__force __be64 *)fsp->h_ext.data) = cpu_to_be64(value);
+	*((__force __be64 *)fsp->m_ext.data) = cpu_to_be64(mask);
 }
 
 /**
@@ -4027,6 +4027,14 @@ no_input_set:
 	else
 		fsp->ring_cookie = rule->q_index;
 
+	if (rule->vlan_tag) {
+		fsp->h_ext.vlan_etype = rule->vlan_etype;
+		fsp->m_ext.vlan_etype = htons(0xFFFF);
+		fsp->h_ext.vlan_tci = rule->vlan_tag;
+		fsp->m_ext.vlan_tci = htons(0xFFFF);
+		fsp->flow_type |= FLOW_EXT;
+	}
+
 	if (rule->dest_vsi != pf->vsi[pf->lan_vsi]->id) {
 		struct i40e_vsi *vsi;
 
@@ -4134,7 +4142,7 @@ static int i40e_get_cloud_filter_entry(struct i40e_pf *pf,
 			fsp->flow_type = IP_USER_FLOW;
 		}
 
-		fsp->h_u.usr_ip4_spec.ip4dst = filter->inner_ip[0];
+		fsp->h_u.usr_ip4_spec.ip4dst = filter->dst_ipv4;
 		fsp->h_u.usr_ip4_spec.ip_ver = ETH_RX_NFC_IP4;
 	} else {
 		fsp->flow_type = ETHER_FLOW;
@@ -4458,7 +4466,7 @@ static int i40e_cloud_filter_mask2flags(struct i40e_pf *pf,
 			i |= I40E_CLOUD_FIELD_IIP;
 		} else {
 			dev_info(&pf->pdev->dev, "Bad UDP dst mask 0x%04x\n",
-				 be32_to_cpu(fsp->m_u.udp_ip4_spec.pdst));
+				 be16_to_cpu(fsp->m_u.udp_ip4_spec.pdst));
 			return I40E_ERR_CONFIG;
 		}
 		break;
@@ -4734,12 +4742,8 @@ static int i40e_add_cloud_filter_ethtool(struct i40e_vsi *vsi,
 			kfree(filter);
 			return I40E_ERR_CONFIG;
 		}
-		if (userdef->outer_ip) {
-			filter->dst_ipv4 = fsp->h_u.usr_ip4_spec.ip4dst;
-			filter->n_proto = ETH_P_IP;
-		} else {
-			filter->inner_ip[0] = fsp->h_u.usr_ip4_spec.ip4dst;
-		}
+		filter->dst_ipv4 = fsp->h_u.usr_ip4_spec.ip4dst;
+		filter->n_proto = ETH_P_IP;
 		break;
 
 	case UDP_V4_FLOW:
@@ -5407,8 +5411,9 @@ static int i40e_check_fdir_input_set(struct i40e_vsi *vsi,
 				     struct i40e_rx_flow_userdef *userdef)
 {
 #ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
-	static const __be32 ipv6_full_mask[4] = {0xffffffff, 0xffffffff,
-		0xffffffff, 0xffffffff};
+	static const __be32 ipv6_full_mask[4] = {
+		cpu_to_be32(0xffffffff), cpu_to_be32(0xffffffff),
+		cpu_to_be32(0xffffffff), cpu_to_be32(0xffffffff)};
 	struct ethtool_tcpip6_spec *tcp_ip6_spec;
 	struct ethtool_usrip6_spec *usr_ip6_spec;
 #endif /* HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC */
@@ -5658,6 +5663,19 @@ static int i40e_check_fdir_input_set(struct i40e_vsi *vsi,
 		return -EOPNOTSUPP;
 	}
 
+	if (fsp->flow_type & FLOW_EXT) {
+	/* Allow only 802.1Q and no etype defined, as
+	 * later it's modified to 0x8100
+	 */
+		if (fsp->h_ext.vlan_etype != htons(ETH_P_8021Q) &&
+		    fsp->h_ext.vlan_etype != 0)
+			return -EOPNOTSUPP;
+		if (fsp->m_ext.vlan_tci == htons(0xFFFF))
+			new_mask |= I40E_VLAN_SRC_MASK;
+		else
+			new_mask &= ~I40E_VLAN_SRC_MASK;
+	}
+
 	/* First, clear all flexible filter entries */
 	new_mask &= ~I40E_FLEX_INPUT_MASK;
 
@@ -5837,7 +5855,9 @@ static bool i40e_match_fdir_filter(struct i40e_fdir_filter *a,
 	    a->dst_port != b->dst_port ||
 	    a->src_port != b->src_port ||
 	    a->flow_type != b->flow_type ||
-	    a->ipl4_proto != b->ipl4_proto)
+	    a->ipl4_proto != b->ipl4_proto ||
+	    a->vlan_tag != b->vlan_tag ||
+	    a->vlan_etype != b->vlan_etype)
 		return false;
 
 	return true;
@@ -5995,7 +6015,11 @@ static int i40e_add_fdir_ethtool(struct i40e_vsi *vsi,
 	input->fd_status = I40E_FILTER_PROGRAM_DESC_FD_STATUS_FD_ID;
 	input->cnt_index  = I40E_FD_SB_STAT_IDX(pf->hw.pf_id);
 	input->flow_type = fsp->flow_type & ~FLOW_EXT;
-
+	input->vlan_etype = fsp->h_ext.vlan_etype;
+	if (!fsp->m_ext.vlan_etype && fsp->h_ext.vlan_tci)
+		input->vlan_etype = cpu_to_be16(ETH_P_8021Q);
+	if (fsp->m_ext.vlan_tci && input->vlan_etype)
+		input->vlan_tag = fsp->h_ext.vlan_tci;
 #ifdef HAVE_ETHTOOL_FLOW_UNION_IP6_SPEC
 	if (input->flow_type == IPV6_USER_FLOW ||
 	    input->flow_type == UDP_V6_FLOW ||
@@ -6893,6 +6917,7 @@ static int i40e_set_eee(struct net_device *netdev, struct ethtool_eee *edata)
 
 	/* Cache current PHY configuration */
 	config.phy_type = abilities.phy_type;
+	config.phy_type_ext = abilities.phy_type_ext;
 	config.link_speed = abilities.link_speed;
 	config.abilities = abilities.abilities |
 			   I40E_AQ_PHY_ENABLE_ATOMIC_LINK;
@@ -6904,10 +6929,10 @@ static int i40e_set_eee(struct net_device *netdev, struct ethtool_eee *edata)
 	/* Set desired EEE state */
 	if (edata->eee_enabled) {
 		config.eee_capability = eee_capability;
-		config.eeer |= I40E_PRTPM_EEER_TX_LPI_EN_MASK;
+		config.eeer |= cpu_to_le32(I40E_PRTPM_EEER_TX_LPI_EN_MASK);
 	} else {
 		config.eee_capability = 0;
-		config.eeer &= ~I40E_PRTPM_EEER_TX_LPI_EN_MASK;
+		config.eeer &= ~cpu_to_le32(I40E_PRTPM_EEER_TX_LPI_EN_MASK);
 	}
 
 	/* Apply modified PHY configuration */

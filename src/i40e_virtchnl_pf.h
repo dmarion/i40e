@@ -70,6 +70,12 @@ struct i40e_vm_vlan {
 	u16 vsi_id;
 };
 
+/* used for MAC list 'vm_mac_list' to recognize MACs added by VM */
+struct i40e_vm_mac {
+	struct list_head list;
+	u8 macaddr[ETH_ALEN];
+};
+
 /* VF information structure */
 struct i40e_vf {
 	struct i40e_pf *pf;
@@ -85,7 +91,7 @@ struct i40e_vf {
 	u16 stag;
 
 	struct virtchnl_ether_addr default_lan_addr;
-	u16 port_vlan_id;
+	s16 port_vlan_id;
 	bool pf_set_mac;	/* The VMM admin set the VF MAC address */
 	bool trusted;
 
@@ -110,7 +116,6 @@ struct i40e_vf {
 	bool link_forced;
 	bool link_up;		/* only valid if VF link is forced */
 #endif
-	bool queues_enabled;	/* true if the VF queues are enabled */
 	bool mac_anti_spoof;
 	u16 num_vlan;
 	DECLARE_BITMAP(mirror_vlans, VLAN_N_VID);
@@ -135,6 +140,8 @@ struct i40e_vf {
 	bool allow_bcast;
 	/* VLAN list created by VM for trusted and untrusted VF */
 	struct list_head vm_vlan_list;
+	/* MAC list created by VM */
+	struct list_head vm_mac_list;
 	/* ADq related variables */
 	bool adq_enabled; /* flag to enable adq */
 	u8 num_tc;
