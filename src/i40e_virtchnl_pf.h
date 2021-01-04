@@ -76,6 +76,14 @@ struct i40e_vm_mac {
 	u8 macaddr[ETH_ALEN];
 };
 
+/* used for following share for given traffic class by VF*/
+struct i40e_vf_tc_info {
+	bool applied;
+	u8 applied_tc_share[I40E_MAX_TRAFFIC_CLASS];
+	u8 requested_tc_share[I40E_MAX_TRAFFIC_CLASS];
+	u16 max_tc_tx_rate[I40E_MAX_TRAFFIC_CLASS];
+};
+
 /* VF information structure */
 struct i40e_vf {
 	struct i40e_pf *pf;
@@ -117,6 +125,7 @@ struct i40e_vf {
 	bool link_up;		/* only valid if VF link is forced */
 #endif
 	bool mac_anti_spoof;
+	bool vlan_anti_spoof;
 	u16 num_vlan;
 	DECLARE_BITMAP(mirror_vlans, VLAN_N_VID);
 	u16 vlan_rule_id;
@@ -135,6 +144,7 @@ struct i40e_vf {
 	u8 promisc_mode;
 	u8 bw_share;
 	bool bw_share_applied; /* true if config is applied to the device */
+	bool tc_bw_share_req;
 	bool pf_ctrl_disable; /* bool for PF ctrl of VF enable/disable */
 	u8 queue_type;
 	bool allow_bcast;
@@ -148,6 +158,7 @@ struct i40e_vf {
 	struct i40evf_channel ch[I40E_MAX_VF_VSI];
 	struct hlist_head cloud_filter_list;
 	u16 num_cloud_filters;
+	struct i40e_vf_tc_info tc_info;
 };
 
 void i40e_free_vfs(struct i40e_pf *pf);

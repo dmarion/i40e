@@ -4491,6 +4491,23 @@ i40e_status i40e_aq_config_vsi_bw_limit(struct i40e_hw *hw,
 }
 
 /**
+ * i40e_aq_config_vsi_ets_sla_bw_limit - Config VSI BW Limit per TC
+ * @hw: pointer to the hw struct
+ * @seid: VSI seid
+ * @bw_data: Buffer holding enabled TCs, per TC BW limit/credits
+ * @cmd_details: pointer to command details structure or NULL
+ **/
+i40e_status i40e_aq_config_vsi_ets_sla_bw_limit(struct i40e_hw *hw,
+			u16 seid,
+			struct i40e_aqc_configure_vsi_ets_sla_bw_data *bw_data,
+			struct i40e_asq_cmd_details *cmd_details)
+{
+	return i40e_aq_tx_sched_cmd(hw, seid, (void *)bw_data, sizeof(*bw_data),
+				    i40e_aqc_opc_configure_vsi_ets_sla_bw_limit,
+				    cmd_details);
+}
+
+/**
  * i40e_aq_config_vsi_tc_bw - Config VSI BW Allocation per TC
  * @hw: pointer to the hw struct
  * @seid: VSI seid
@@ -4539,6 +4556,23 @@ i40e_status i40e_aq_config_switch_comp_bw_config(struct i40e_hw *hw,
 {
 	return i40e_aq_tx_sched_cmd(hw, seid, (void *)bw_data, sizeof(*bw_data),
 			    i40e_aqc_opc_configure_switching_comp_bw_config,
+			    cmd_details);
+}
+
+/**
+ * i40e_aq_config_switch_comp_ets_bw_limit - Config Switch comp BW Limit per TC
+ * @hw: pointer to the hw struct
+ * @seid: seid of the switching component
+ * @bw_data: Buffer holding enabled TCs, per TC BW limit/credits
+ * @cmd_details: pointer to command details structure or NULL
+ **/
+i40e_status i40e_aq_config_switch_comp_ets_bw_limit(
+	struct i40e_hw *hw, u16 seid,
+	struct i40e_aqc_configure_switching_comp_ets_bw_limit_data *bw_data,
+	struct i40e_asq_cmd_details *cmd_details)
+{
+	return i40e_aq_tx_sched_cmd(hw, seid, (void *)bw_data, sizeof(*bw_data),
+			    i40e_aqc_opc_configure_switching_comp_ets_bw_limit,
 			    cmd_details);
 }
 

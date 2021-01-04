@@ -74,6 +74,7 @@ static const char * const i40e_ptp_gpio_pin_state2str[] = {
 };
 
 enum i40e_ptp_led_pin_state {
+	led_end = -2,
 	low = 0,
 	high,
 };
@@ -145,7 +146,7 @@ static const struct i40e_ptp_pins_settings
 	{in_B,	off,	out_B,		low,	high,	high,	low},
 	{in_B,	in_A,	out_B,		low,	high,	high,	low},
 	{in_B,	out_A,	out_B,		low,	low,	high,	high},
-	{end,	end,	end,		end,	end,	end,	end}
+	{end,	end,	end,	led_end, led_end, led_end, led_end}
 };
 
 static int i40e_ptp_set_pins(struct i40e_pf *pf,
@@ -176,7 +177,7 @@ static void i40e_ptp_extts0_work(struct work_struct *work)
 	event.timestamp = (((u64)hi) << 32) | lo;
 
 	event.type = PTP_CLOCK_EXTTS;
-	event.index = 0;
+	event.index = hw->pf_id;
 
 	/* fire event */
 	ptp_clock_event(pf->ptp_clock, &event);
@@ -209,9 +210,9 @@ static bool i40e_can_do_pins(struct i40e_pf *pf)
 		return false;
 	}
 
-	if (!pf->ptp_pins || pf->hw.pf_id) {
+	if (!pf->ptp_pins) {
 		dev_warn(&pf->pdev->dev,
-			 "PTP PIN reading allowed for PF0 only.\n");
+			 "PTP PIN manipulation not allowed.\n");
 		return false;
 	}
 
@@ -590,6 +591,10 @@ static int i40e_ptp_enable_pin(struct i40e_pf *pf, unsigned int chan,
 	struct i40e_ptp_pins_settings pins;
 	int pin_index;
 
+	/* Use PF0 to set pins. Return success for user space tools */
+	if (pf->hw.pf_id)
+		return 0;
+
 	/* Preserve previous state of pins that we don't touch */
 	pins.sdp3_2 = pf->ptp_pins->sdp3_2;
 	pins.sdp3_3 = pf->ptp_pins->sdp3_3;
@@ -622,12 +627,9 @@ static int i40e_ptp_enable_pin(struct i40e_pf *pf, unsigned int chan,
 
 		*pin = i40e_pin_state(chan, func);
 	} else {
-		if (pins.sdp3_2 == i40e_pin_state(chan, func))
-			pins.sdp3_2 = off;
-		if (pins.sdp3_3 == i40e_pin_state(chan, func))
-			pins.sdp3_3 = off;
-		if (pins.gpio_4 == i40e_pin_state(chan, func))
-			pins.gpio_4 = off;
+		pins.sdp3_2 = off;
+		pins.sdp3_3 = off;
+		pins.gpio_4 = off;
 	}
 
 	return i40e_ptp_set_pins(pf, &pins) ? -EINVAL : 0;
@@ -985,7 +987,7 @@ int i40e_ptp_get_ts_config(struct i40e_pf *pf, struct ifreq *ifr)
  **/
 static void i40e_ptp_free_pins(struct i40e_pf *pf)
 {
-	if (pf->hw.pf_id == 0 && i40e_is_ptp_pin_dev(&pf->hw)) {
+	if (i40e_is_ptp_pin_dev(&pf->hw)) {
 		kfree(pf->ptp_pins);
 		kfree(pf->ptp_caps.pin_config);
 		pf->ptp_pins = NULL;
@@ -1058,6 +1060,24 @@ static void i40e_ptp_set_led_hw(struct i40e_hw *hw,
 }
 
 /**
+ * i40e_ptp_init_leds_hw - init LEDs
+ * @hw: pointer to a hardware structure
+ *
+ * Set initial state of LEDs
+ **/
+static void i40e_ptp_init_leds_hw(struct i40e_hw *hw)
+{
+	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_LED2_0),
+	     I40E_GLGEN_GPIO_CTL_LED_INIT);
+	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_LED2_1),
+	     I40E_GLGEN_GPIO_CTL_LED_INIT);
+	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_LED3_0),
+	     I40E_GLGEN_GPIO_CTL_LED_INIT);
+	wr32(hw, I40E_GLGEN_GPIO_CTL(I40E_LED3_1),
+	     I40E_GLGEN_GPIO_CTL_LED_INIT);
+}
+
+/**
  * i40e_ptp_set_pins_hw - Set HW GPIO pins
  * @pf: Board private structure
  *
@@ -1104,6 +1124,10 @@ static int i40e_ptp_set_pins(struct i40e_pf *pf,
 
 	if (!i40e_can_do_pins(pf))
 		return -EOPNOTSUPP;
+
+	/* Use PF0 to set pins. Return success for user space tools */
+	if (pf->hw.pf_id)
+		return 0;
 
 	if (pins->sdp3_2 == invalid)
 		pins->sdp3_2 = pf->ptp_pins->sdp3_2;
@@ -1156,7 +1180,7 @@ int i40e_ptp_set_pins_ioctl(struct i40e_pf *pf, struct ifreq *ifr)
 	struct i40e_ptp_pins_settings pins;
 	int err;
 
-	if (!i40e_can_do_pins(pf))
+	if (!i40e_can_do_pins(pf) || pf->hw.pf_id)
 		return -EOPNOTSUPP;
 
 	err = copy_from_user(&pins, ifr->ifr_data, sizeof(pins));
@@ -1176,7 +1200,7 @@ int i40e_ptp_set_pins_ioctl(struct i40e_pf *pf, struct ifreq *ifr)
  **/
 int i40e_ptp_alloc_pins(struct i40e_pf *pf)
 {
-	if (pf->hw.pf_id || !i40e_is_ptp_pin_dev(&pf->hw))
+	if (!i40e_is_ptp_pin_dev(&pf->hw))
 		return 0;
 
 	pf->ptp_pins =
@@ -1187,6 +1211,10 @@ int i40e_ptp_alloc_pins(struct i40e_pf *pf)
 		return -I40E_ERR_NO_MEMORY;
 	}
 
+	/* Use PF0 to set pins. Return success for user space tools */
+	if (pf->hw.pf_id)
+		return 0;
+
 	pf->ptp_pins->sdp3_2 = off;
 	pf->ptp_pins->sdp3_3 = off;
 	pf->ptp_pins->gpio_4 = off;
@@ -1195,6 +1223,7 @@ int i40e_ptp_alloc_pins(struct i40e_pf *pf)
 	pf->ptp_pins->led3_0 = high;
 	pf->ptp_pins->led3_1 = high;
 
+	i40e_ptp_init_leds_hw(&pf->hw);
 	i40e_ptp_set_pins_hw(pf);
 
 	return 0;
@@ -1209,7 +1238,7 @@ int i40e_ptp_alloc_pins(struct i40e_pf *pf)
  **/
 int i40e_ptp_get_pins(struct i40e_pf *pf, struct ifreq *ifr)
 {
-	if (!i40e_can_do_pins(pf))
+	if (!i40e_can_do_pins(pf) || pf->hw.pf_id)
 		return -EOPNOTSUPP;
 
 	return copy_to_user(ifr->ifr_data, pf->ptp_pins,
@@ -1404,9 +1433,6 @@ int i40e_ptp_set_ts_config(struct i40e_pf *pf, struct ifreq *ifr)
 static int i40e_init_pin_config(struct i40e_pf *pf)
 {
 	int i;
-
-	if (pf->hw.pf_id != 0)
-		return -EOPNOTSUPP;
 
 	pf->ptp_caps.n_pins = 3;
 	pf->ptp_caps.n_ext_ts = 2;
@@ -1661,7 +1687,7 @@ static ssize_t i40e_sysfs_ptp_pins_write(struct kobject *kobj,
  **/
 static void i40e_ptp_pins_sysfs_init(struct i40e_pf *pf)
 {
-	if (pf->hw.pf_id != 0 || !i40e_is_ptp_pin_dev(&pf->hw))
+	if (!i40e_is_ptp_pin_dev(&pf->hw))
 		return;
 
 	pf->ptp_kobj = kobject_create_and_add("ptp_pins", &pf->pdev->dev.kobj);

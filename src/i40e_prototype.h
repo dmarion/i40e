@@ -278,6 +278,14 @@ i40e_status i40e_aq_mac_address_write(struct i40e_hw *hw,
 i40e_status i40e_aq_config_vsi_bw_limit(struct i40e_hw *hw,
 				u16 seid, u16 credit, u8 max_credit,
 				struct i40e_asq_cmd_details *cmd_details);
+i40e_status i40e_aq_config_switch_comp_ets_bw_limit(
+	struct i40e_hw *hw, u16 seid,
+	struct i40e_aqc_configure_switching_comp_ets_bw_limit_data *bw_data,
+	struct i40e_asq_cmd_details *cmd_details);
+i40e_status i40e_aq_config_vsi_ets_sla_bw_limit(struct i40e_hw *hw,
+			u16 seid,
+			struct i40e_aqc_configure_vsi_ets_sla_bw_data *bw_data,
+			struct i40e_asq_cmd_details *cmd_details);
 i40e_status i40e_aq_dcb_updated(struct i40e_hw *hw,
 				struct i40e_asq_cmd_details *cmd_details);
 i40e_status i40e_aq_config_switch_comp_bw_limit(struct i40e_hw *hw,

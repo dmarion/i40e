@@ -302,6 +302,8 @@ static const struct i40e_priv_flags i40e_gstrings_priv_flags[] = {
 	I40E_PRIV_FLAG("disable-fw-lldp", I40E_FLAG_DISABLE_FW_LLDP, 0),
 	I40E_PRIV_FLAG("rs-fec", I40E_FLAG_RS_FEC, 0),
 	I40E_PRIV_FLAG("base-r-fec", I40E_FLAG_BASE_R_FEC, 0),
+	I40E_PRIV_FLAG("multiple-traffic-classes",
+		       I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES, 0),
 };
 
 #define I40E_PRIV_FLAGS_STR_LEN ARRAY_SIZE(i40e_gstrings_priv_flags)
@@ -1175,8 +1177,7 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 			 */
 			if (ethtool_link_ksettings_test_link_mode(
 				     &safe_ks, supported, Autoneg) &&
-			    hw->phy.link_info.phy_type !=
-			    I40E_PHY_TYPE_10GBASE_T) {
+			    hw->phy.media_type != I40E_MEDIA_TYPE_BASET) {
 				netdev_info(netdev, "Autoneg cannot be disabled on this phy\n");
 				err = -EINVAL;
 				goto done;
@@ -1667,12 +1668,7 @@ static int i40e_set_fec_param(struct net_device *netdev,
 
 	if (hw->device_id != I40E_DEV_ID_25G_SFP28 &&
 	    hw->device_id != I40E_DEV_ID_25G_B &&
-	    hw->device_id != I40E_DEV_ID_KX_X722 &&
-	    hw->device_id != I40E_DEV_ID_QSFP_X722 &&
-	    hw->device_id != I40E_DEV_ID_SFP_X722 &&
-	    hw->device_id != I40E_DEV_ID_1G_BASE_T_X722 &&
-	    hw->device_id != I40E_DEV_ID_10G_BASE_T_X722 &&
-	    hw->device_id != I40E_DEV_ID_SFP_I_X722) {
+	    hw->device_id != I40E_DEV_ID_KX_X722) {
 		err = -EPERM;
 		goto done;
 	}
@@ -1680,16 +1676,28 @@ static int i40e_set_fec_param(struct net_device *netdev,
 	if (hw->mac.type == I40E_MAC_X722 &&
 	    !(hw->flags & I40E_HW_FLAG_X722_FEC_REQUEST_CAPABLE)) {
 		netdev_err(netdev, "Setting FEC encoding not supported by firmware. Please update the NVM image.\n");
-		return -EINVAL;
+		return -EOPNOTSUPP;
 	}
 
 	switch (fecparam->fec) {
 	case ETHTOOL_FEC_AUTO:
-		fec_cfg = I40E_AQ_SET_FEC_AUTO;
+		if (hw->mac.type == I40E_MAC_X722) {
+			dev_warn(&pf->pdev->dev, "Unsupported FEC mode: AUTO");
+			err = -EINVAL;
+			goto done;
+		} else {
+			fec_cfg = I40E_AQ_SET_FEC_AUTO;
+		}
 		break;
 	case ETHTOOL_FEC_RS:
-		fec_cfg = (I40E_AQ_SET_FEC_REQUEST_RS |
-			     I40E_AQ_SET_FEC_ABILITY_RS);
+		if (hw->mac.type == I40E_MAC_X722) {
+			dev_warn(&pf->pdev->dev, "Unsupported FEC mode: RS");
+			err = -EINVAL;
+			goto done;
+		} else {
+			fec_cfg = (I40E_AQ_SET_FEC_REQUEST_RS |
+				   I40E_AQ_SET_FEC_ABILITY_RS);
+		}
 		break;
 	case ETHTOOL_FEC_BASER:
 		fec_cfg = (I40E_AQ_SET_FEC_REQUEST_KR |
@@ -6436,7 +6444,7 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 	enum i40e_admin_queue_err adq_err;
 	struct i40e_vsi *vsi = np->vsi;
 	struct i40e_pf *pf = vsi->back;
-	bool is_reset_needed;
+	u32 reset_needed = 0;
 	i40e_status status;
 	u32 i, j;
 
@@ -6481,9 +6489,11 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 flags_complete:
 	changed_flags = orig_flags ^ new_flags;
 
-	is_reset_needed = !!(changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
-		I40E_FLAG_LEGACY_RX | I40E_FLAG_SOURCE_PRUNING_DISABLED |
-		I40E_FLAG_DISABLE_FW_LLDP));
+	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP)
+		reset_needed = I40E_PF_RESET_AND_REBUILD_FLAG;
+	if (changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
+	    I40E_FLAG_LEGACY_RX | I40E_FLAG_SOURCE_PRUNING_DISABLED))
+		reset_needed = BIT(__I40E_PF_RESET_REQUESTED);
 
 	/* Before we finalize any flag changes, we need to perform some
 	 * checks to ensure that the changes are supported and safe.
@@ -6502,7 +6512,8 @@ flags_complete:
 	 * disable LLDP, however we _must_ not allow the user to enable/disable
 	 * LLDP with this flag on unsupported FW versions.
 	 */
-	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP) {
+	if (changed_flags & (I40E_FLAG_DISABLE_FW_LLDP |
+	    I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES)) {
 		if (!(pf->hw.flags & I40E_HW_FLAG_FW_LLDP_STOPPABLE)) {
 			dev_warn(&pf->pdev->dev,
 				 "Device does not support changing FW LLDP\n");
@@ -6521,12 +6532,7 @@ flags_complete:
 	if (changed_flags & I40E_FLAG_BASE_R_FEC &&
 	    pf->hw.device_id != I40E_DEV_ID_25G_SFP28 &&
 	    pf->hw.device_id != I40E_DEV_ID_25G_B &&
-	    pf->hw.device_id != I40E_DEV_ID_KX_X722 &&
-	    pf->hw.device_id != I40E_DEV_ID_QSFP_X722 &&
-	    pf->hw.device_id != I40E_DEV_ID_SFP_X722 &&
-	    pf->hw.device_id != I40E_DEV_ID_1G_BASE_T_X722 &&
-	    pf->hw.device_id != I40E_DEV_ID_10G_BASE_T_X722 &&
-	    pf->hw.device_id != I40E_DEV_ID_SFP_I_X722) {
+	    pf->hw.device_id != I40E_DEV_ID_KX_X722) {
 		dev_warn(&pf->pdev->dev,
 			 "Device does not support changing FEC configuration\n");
 		return -EOPNOTSUPP;
@@ -6593,24 +6599,31 @@ flags_complete:
 		dev_warn(&pf->pdev->dev,
 			 "Turning on link-down-on-close flag may affect other partitions\n");
 
-	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP) {
-		if (new_flags & I40E_FLAG_DISABLE_FW_LLDP) {
-			struct i40e_dcbx_config *dcbcfg;
+	if ((changed_flags & I40E_FLAG_DISABLE_FW_LLDP) &&
+	    orig_flags & I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES) {
+		dev_warn(&pf->pdev->dev,
+			 "Cannot change FW LLDP setting, disable multiple-traffic-class to change this setting\n");
+		return -EINVAL;
+	}
 
+	if ((changed_flags & I40E_FLAG_DISABLE_FW_LLDP) ||
+	    (changed_flags & I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES)) {
+		if ((new_flags & I40E_FLAG_DISABLE_FW_LLDP) &&
+		    !(new_flags & I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES)) {
+#ifdef CONFIG_DCB
+			i40e_dcb_sw_default_config(pf, I40E_ETS_WILLING_MODE);
+#endif /* CONFIG_DCB */
+			i40e_aq_cfg_lldp_mib_change_event(&pf->hw, false, NULL);
 			i40e_aq_stop_lldp(&pf->hw, true, false, NULL);
-			i40e_aq_set_dcb_parameters(&pf->hw, true, NULL);
-			/* reset local_dcbx_config to default */
-			dcbcfg = &pf->hw.local_dcbx_config;
-			dcbcfg->etscfg.willing = 1;
-			dcbcfg->etscfg.maxtcs = 0;
-			dcbcfg->etscfg.tcbwtable[0] = 100;
-			for (i = 1; i < I40E_MAX_TRAFFIC_CLASS; i++)
-				dcbcfg->etscfg.tcbwtable[i] = 0;
-			for (i = 0; i < I40E_MAX_USER_PRIORITY; i++)
-				dcbcfg->etscfg.prioritytable[i] = 0;
-			dcbcfg->etscfg.tsatable[0] = I40E_IEEE_TSA_ETS;
-			dcbcfg->pfc.willing = 1;
-			dcbcfg->pfc.pfccap = I40E_MAX_TRAFFIC_CLASS;
+		} else if (new_flags &
+			   I40E_FLAG_MULTIPLE_TRAFFIC_CLASSES) {
+#ifdef CONFIG_DCB
+			i40e_dcb_sw_default_config(pf,
+						   I40E_ETS_NON_WILLING_MODE);
+#endif /* CONFIG_DCB */
+			i40e_aq_cfg_lldp_mib_change_event(&pf->hw, false, NULL);
+			i40e_aq_stop_lldp(&pf->hw, true, false, NULL);
+			new_flags &= ~(I40E_FLAG_DISABLE_FW_LLDP);
 		} else {
 			status = i40e_aq_start_lldp(&pf->hw, false, NULL);
 			if (status != I40E_SUCCESS) {
@@ -6619,7 +6632,7 @@ flags_complete:
 				case I40E_AQ_RC_EEXIST:
 					dev_warn(&pf->pdev->dev,
 						 "FW LLDP agent is already running\n");
-					is_reset_needed = false;
+					reset_needed = 0;
 					break;
 				case I40E_AQ_RC_EPERM:
 					dev_warn(&pf->pdev->dev,
@@ -6627,11 +6640,11 @@ flags_complete:
 					return (-EINVAL);
 				default:
 					dev_warn(&pf->pdev->dev,
-						 "Starting FW LLDP agent failed: error: %s, %s\n",
+						 "Starting FW LLDP agent failed with error: %s, %s\n",
 						 i40e_stat_str(&pf->hw,
-							       status),
+						 status),
 						 i40e_aq_str(&pf->hw,
-							     adq_err));
+						 adq_err));
 					return (-EINVAL);
 				}
 			}
@@ -6648,8 +6661,8 @@ flags_complete:
 	/* Issue reset to cause things to take effect, as additional bits
 	 * are added we will need to create a mask of bits requiring reset
 	 */
-	if (is_reset_needed)
-		i40e_do_reset(pf, BIT(__I40E_PF_RESET_REQUESTED), true);
+	if (reset_needed)
+		i40e_do_reset(pf, reset_needed, true);
 
 	return 0;
 }

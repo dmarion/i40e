@@ -106,13 +106,13 @@ struct i40e_cee_tlv_hdr {
 	__be16 typelen;
 	u8 operver;
 	u8 maxver;
-} __packed;
+};
 
 struct i40e_cee_ctrl_tlv {
 	struct i40e_cee_tlv_hdr hdr;
 	__be32 seqno;
 	__be32 ackno;
-} __packed;
+};
 
 struct i40e_cee_feat_tlv {
 	struct i40e_cee_tlv_hdr hdr;
@@ -122,7 +122,7 @@ struct i40e_cee_feat_tlv {
 #define I40E_CEE_FEAT_TLV_ERR_MASK	0x20
 	u8 subtype;
 	u8 tlvinfo[1];
-} __packed;
+};
 
 struct i40e_cee_app_prio {
 	__be16 protocol;

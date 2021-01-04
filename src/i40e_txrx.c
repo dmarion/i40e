@@ -1710,6 +1710,32 @@ static inline void i40e_release_rx_desc(struct i40e_ring *rx_ring, u32 val)
 	writel(val, rx_ring->tail);
 }
 
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+/**
+ * i40e_rx_frame_truesize - Returns an actual size of Rx frame in memory
+ * @rx_ring: Rx ring we are requesting the frame size of
+ * @size: Packet length from rx_desc
+ *
+ * Returns an actual size of Rx frame in memory, considering page size
+ * and SKB data alignment.
+ */
+static unsigned int i40e_rx_frame_truesize(struct i40e_ring *rx_ring,
+					   unsigned int size)
+{
+	unsigned int truesize;
+
+#if (PAGE_SIZE < 8192)
+	truesize = i40e_rx_pg_size(rx_ring) / 2; /* Must be power-of-2 */
+#else
+	truesize = i40e_rx_offset(rx_ring) ?
+		SKB_DATA_ALIGN(size + i40e_rx_offset(rx_ring)) +
+		SKB_DATA_ALIGN(sizeof(struct skb_shared_info)) :
+		SKB_DATA_ALIGN(size);
+#endif
+	return truesize;
+}
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
+
 #ifdef CONFIG_I40E_DISABLE_PACKET_SPLIT
 static bool i40e_alloc_mapped_skb(struct i40e_ring *rx_ring,
 				  struct i40e_rx_buffer *bi)
@@ -2325,7 +2351,7 @@ static bool i40e_can_reuse_rx_page(struct i40e_rx_buffer *rx_buffer)
 	 * number of references the driver holds.
 	 */
 #ifdef HAVE_PAGE_COUNT_BULK_UPDATE
-	if (unlikely(!pagecnt_bias)) {
+	if (unlikely(pagecnt_bias == 1)) {
 		page_ref_add(page, USHRT_MAX - 1);
 		rx_buffer->pagecnt_bias = USHRT_MAX;
 	}
@@ -2677,13 +2703,19 @@ static void i40e_rx_buffer_flip(struct i40e_ring *rx_ring,
 				struct i40e_rx_buffer *rx_buffer,
 				unsigned int size)
 {
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+	unsigned int truesize = i40e_rx_frame_truesize(rx_ring, size);
+#else /* HAVE_XDP_BUFF_FRAME_SZ */
 #if (PAGE_SIZE < 8192)
 	unsigned int truesize = i40e_rx_pg_size(rx_ring) / 2;
-
-	rx_buffer->page_offset ^= truesize;
 #else
 	unsigned int truesize = SKB_DATA_ALIGN(i40e_rx_offset(rx_ring) + size);
+#endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 
+#if (PAGE_SIZE < 8192)
+	rx_buffer->page_offset ^= truesize;
+#else
 	rx_buffer->page_offset += truesize;
 #endif
 }
@@ -2708,6 +2740,12 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 	unsigned int xdp_xmit = 0;
 	bool failure = false;
 	struct xdp_buff xdp;
+
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+#if (PAGE_SIZE < 8192)
+	xdp.frame_sz = i40e_rx_frame_truesize(rx_ring, 0);
+#endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 
 #ifdef HAVE_XDP_BUFF_RXQ
 	xdp.rxq = &rx_ring->xdp_rxq;
@@ -2772,7 +2810,12 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 			xdp.data_hard_start = (void *)((u8 *)xdp.data -
 					      i40e_rx_offset(rx_ring));
 			xdp.data_end = (void *)((u8 *)xdp.data + size);
-
+#ifdef HAVE_XDP_BUFF_FRAME_SZ
+#if (PAGE_SIZE > 4096)
+			/* At larger PAGE_SIZE, frame_sz depend on len size */
+			xdp.frame_sz = i40e_rx_frame_truesize(rx_ring, size);
+#endif
+#endif /* HAVE_XDP_BUFF_FRAME_SZ */
 			skb = i40e_run_xdp(rx_ring, &xdp);
 		}
 
